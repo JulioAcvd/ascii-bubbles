@@ -31,7 +31,7 @@ export class BubbleAudio {
     }
   }
 
-  playPop(radius: number, cause: 'click' | 'collision'): void {
+  playPop(radius: number, cause: 'click' | 'collision' | 'overinflate'): void {
     if (this.muted || typeof window === 'undefined') return;
     const ctx = this.ensureContext();
     if (!ctx) return;
@@ -41,22 +41,22 @@ export class BubbleAudio {
     }
 
     const now = ctx.currentTime;
-    // Slight rate-limit prevents harsh clipping if many bubbles pop on the exact same millisecond
     if (now - this.lastPlayTime < 0.018) return;
     this.lastPlayTime = now;
 
-    // Larger bubbles sound deeper & fuller; small bubbles sound higher & crisper
-    const sizeNorm = Math.max(0, Math.min(1, (radius - 24) / 72));
-    const baseFreq = 560 - sizeNorm * 310 + (Math.random() - 0.5) * 35;
-    const duration = 0.042 + sizeNorm * 0.028;
-    const gainLevel = (cause === 'click' ? 0.14 : 0.095) * (0.85 + sizeNorm * 0.25);
+    // Larger & giant bubbles sound noticeably deeper, fuller, and slightly longer
+    const sizeNorm = Math.max(0, Math.min(1, (radius - 24) / 145));
+    const baseFreq = 560 - sizeNorm * 415 + (Math.random() - 0.5) * 30;
+    const duration = 0.042 + sizeNorm * 0.052;
+    const baseGain = cause === 'overinflate' ? 0.165 : cause === 'click' ? 0.14 : 0.095;
+    const gainLevel = baseGain * (0.85 + sizeNorm * 0.3);
 
     // 1. Classic bubble-bloop upward pitch chirp
     const osc = ctx.createOscillator();
     const oscGain = ctx.createGain();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(baseFreq, now);
-    osc.frequency.exponentialRampToValueAtTime(baseFreq * 2.25, now + duration);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * (2.25 - sizeNorm * 0.35), now + duration);
 
     oscGain.gain.setValueAtTime(0.0001, now);
     oscGain.gain.linearRampToValueAtTime(gainLevel, now + 0.004);
@@ -65,7 +65,7 @@ export class BubbleAudio {
     osc.connect(oscGain);
     oscGain.connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + duration + 0.01);
+    osc.stop(now + duration + 0.012);
 
     // 2. Crisp short filtered noise snap (soap film tearing)
     if (this.noiseBuffer) {
@@ -74,18 +74,19 @@ export class BubbleAudio {
 
       const filter = ctx.createBiquadFilter();
       filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(1900 - sizeNorm * 650, now);
-      filter.Q.setValueAtTime(2.4, now);
+      filter.frequency.setValueAtTime(1950 - sizeNorm * 1050, now);
+      filter.Q.setValueAtTime(2.2 - sizeNorm * 0.6, now);
 
       const noiseGain = ctx.createGain();
-      noiseGain.gain.setValueAtTime(gainLevel * 0.52, now);
-      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.016);
+      const snapDuration = 0.016 + sizeNorm * 0.016;
+      noiseGain.gain.setValueAtTime(gainLevel * 0.56, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + snapDuration);
 
       noise.connect(filter);
       filter.connect(noiseGain);
       noiseGain.connect(ctx.destination);
       noise.start(now);
-      noise.stop(now + 0.02);
+      noise.stop(now + snapDuration + 0.01);
     }
   }
 

@@ -9,7 +9,7 @@ import type {
 } from './types';
 
 export const FIXED_DT = 1 / 120;
-const MAX_PARTICLES = 900;
+const MAX_PARTICLES = 1000;
 const MAX_RINGS = 32;
 const WALL_RESTITUTION = 0.82;
 const BUBBLE_RESTITUTION = 0.88;
@@ -33,6 +33,10 @@ export interface SimulationConfig {
   height: number;
   targetBubbleCount: number;
   seed?: number;
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return v < min ? min : v > max ? max : v;
 }
 
 /**
@@ -61,7 +65,6 @@ export class BubbleSimulation {
   time = 0;
   poppedTotal = 0;
 
-  // Pointer state for air-current turbulence and subtle background parallax
   pointerX = 0;
   pointerY = 0;
   pointerVx = 0;
@@ -72,6 +75,7 @@ export class BubbleSimulation {
   private rng: () => number;
   private respawnTimer = 0;
   private pendingPopEvents: PopEvent[] = [];
+  private blowingBubbleId: number | null = null;
 
   constructor(config: SimulationConfig) {
     this.width = Math.max(240, config.width);
@@ -114,7 +118,6 @@ export class BubbleSimulation {
       const safeDt = Math.max(0.004, Math.min(0.08, dt));
       const rawVx = (x - this.pointerX) / safeDt;
       const rawVy = (y - this.pointerY) / safeDt;
-      // Exponential smoothing prevents velocity spikes on erratic mouse polling
       const blend = 0.42;
       this.pointerVx = this.pointerVx * (1 - blend) + Math.max(-1800, Math.min(1800, rawVx)) * blend;
       this.pointerVy = this.pointerVy * (1 - blend) + Math.max(-1800, Math.min(1800, rawVy)) * blend;
@@ -136,11 +139,9 @@ export class BubbleSimulation {
   }
 
   /**
-   * Click/tap handler: pops a hit bubble from the exact click location,
-   * or spawns a new bubble gently growing at the clicked empty space.
+   * Returns true if a bubble exists under the given coordinates (with subtle touch forgiveness).
    */
-  handlePointerDown(x: number, y: number): PointerInteractionResult {
-    // Check bubbles from smallest to largest (prefer smaller foreground bubble on overlap)
+  hitTestBubble(x: number, y: number): number {
     let hitIndex = -1;
     let bestDistSq = Infinity;
 
@@ -148,13 +149,22 @@ export class BubbleSimulation {
       const b = this.bubbles[i];
       const dx = x - b.x;
       const dy = y - b.y;
-      const hitR = b.radius + 7; // subtle touch/click forgiveness
+      const hitR = b.radius + 7;
       const dSq = dx * dx + dy * dy;
       if (dSq <= hitR * hitR && dSq < bestDistSq) {
         bestDistSq = dSq;
         hitIndex = i;
       }
     }
+    return hitIndex;
+  }
+
+  /**
+   * Left-click / tap handler: pops a hit bubble from the exact click location,
+   * or spawns a new bubble gently growing at the clicked empty space.
+   */
+  handlePointerDown(x: number, y: number): PointerInteractionResult {
+    const hitIndex = this.hitTestBubble(x, y);
 
     if (hitIndex !== -1) {
       const b = this.bubbles[hitIndex];
@@ -163,11 +173,10 @@ export class BubbleSimulation {
       return { action: 'popped', popEvent, bubbleId: b.id };
     }
 
-    // Clicked empty space -> gently blow a new bubble into existence
     const maxAllowed = this.targetBubbleCount + 14;
     if (this.bubbles.length >= maxAllowed) {
-      // Remove oldest bubble gently if way over cap
-      this.bubbles.shift();
+      const removeIdx = this.bubbles.findIndex((b) => !b.isInflating);
+      if (removeIdx !== -1) this.bubbles.splice(removeIdx, 1);
     }
 
     const targetR = this.pickBubbleRadius();
@@ -188,12 +197,97 @@ export class BubbleSimulation {
   }
 
   /**
+   * Right-click hold (or mobile long-press): starts blowing a bubble anchored at the cursor/finger.
+   * Holding grows it smoothly into a heavy, wobbly giant bubble; holding too long bursts it on the wand!
+   */
+  startBlowing(x: number, y: number): Bubble {
+    if (this.blowingBubbleId !== null) {
+      this.releaseBlowing();
+    }
+
+    const maxAllowed = this.targetBubbleCount + 14;
+    if (this.bubbles.length >= maxAllowed) {
+      const removeIdx = this.bubbles.findIndex((b) => !b.isInflating);
+      if (removeIdx !== -1) this.bubbles.splice(removeIdx, 1);
+    }
+
+    const minDim = Math.min(this.width, this.height);
+    // Max stable giant radius scales cleanly to viewport with natural organic variance
+    const baseBurst = clamp(minDim * 0.25, 112, 192);
+    const burstRadius = baseBurst * (0.92 + this.rng() * 0.16);
+
+    const startR = 13;
+    const clampedX = clamp(x, startR + 4, this.width - startR - 4);
+    const clampedY = clamp(y, startR + 4, this.height - startR - 4);
+
+    const bubble = this.createBubble(clampedX, clampedY, startR, false);
+    bubble.isInflating = true;
+    bubble.burstRadius = burstRadius;
+    bubble.strain = 0;
+    bubble.wandX = x;
+    bubble.wandY = y;
+    bubble.vx = 0;
+    bubble.vy = 0;
+    bubble.wobbleAmp = 0.03;
+    bubble.wobbleVel = 0.25;
+
+    this.bubbles.push(bubble);
+    this.blowingBubbleId = bubble.id;
+    return bubble;
+  }
+
+  updateBlowingPosition(x: number, y: number): void {
+    if (this.blowingBubbleId === null) return;
+    const b = this.bubbles.find((item) => item.id === this.blowingBubbleId);
+    if (!b || !b.isInflating) {
+      this.blowingBubbleId = null;
+      return;
+    }
+    b.wandX = x;
+    b.wandY = y;
+  }
+
+  /**
+   * Releases the currently inflating bubble from the wand into free float with realistic pinch-off wobble.
+   */
+  releaseBlowing(): Bubble | null {
+    if (this.blowingBubbleId === null) return null;
+    const id = this.blowingBubbleId;
+    this.blowingBubbleId = null;
+
+    const b = this.bubbles.find((item) => item.id === id);
+    if (!b) return null;
+
+    b.isInflating = false;
+    b.targetRadius = b.radius;
+    b.strain = 0;
+    b.giantFactor = this.computeGiantFactor(b.radius);
+    b.mass = b.radius * b.radius;
+
+    // Realistic pinch-off elastic recoil as the bubble neck detaches from the wand
+    const releaseAngle = Math.atan2(b.y - b.wandY, b.x - b.wandX);
+    b.wobbleAngle = Number.isFinite(releaseAngle) ? releaseAngle : Math.PI * 0.5;
+    b.wobbleVel -= 0.58 + b.giantFactor * 0.92;
+
+    // Inherit a calm fraction of the wand motion + subtle organic drift
+    b.vx = clamp(b.vx * 0.55 + this.pointerVx * 0.09 + (this.rng() - 0.5) * 14, -140, 140);
+    b.vy = clamp(b.vy * 0.55 + this.pointerVy * 0.09 + (b.giantFactor > 0.3 ? 6 : -8), -140, 140);
+    return b;
+  }
+
+  isBlowing(): boolean {
+    if (this.blowingBubbleId === null) return false;
+    const exists = this.bubbles.some((b) => b.id === this.blowingBubbleId && b.isInflating);
+    if (!exists) this.blowingBubbleId = null;
+    return exists;
+  }
+
+  /**
    * Advance the simulation by one fixed physics step.
    */
   step(dt = FIXED_DT): void {
     this.time += dt;
 
-    // Decay pointer velocity smoothly when cursor stops moving
     const pointerDecay = Math.exp(-11 * dt);
     this.pointerVx *= pointerDecay;
     this.pointerVy *= pointerDecay;
@@ -207,18 +301,25 @@ export class BubbleSimulation {
   }
 
   /**
-   * Surface-tension resilience: larger soap bubbles pop slightly more easily on hard impacts.
+   * Surface-tension resilience: larger & giant soap bubbles pop noticeably more easily on impact.
    */
   getCollisionPopThreshold(radius: number): number {
-    const normalized = Math.max(0, Math.min(1, (radius - 26) / 68));
-    return 185 - normalized * 48; // ~185 px/s for small, ~137 px/s for large
+    const normalized = clamp((radius - 26) / 145, 0, 1);
+    return 185 - normalized * 105; // ~185 px/s for small, ~137 px/s for large, ~80 px/s for giant
   }
 
   /**
-   * Force-pop a bubble by index, creating 2-phase explosion + mild shockwave on neighbors.
+   * Force-pop a bubble by index, creating 2-phase explosion + shockwave on neighbors.
    */
-  popBubbleAtIndex(index: number, originAngle: number, cause: 'click' | 'collision'): PopEvent {
+  popBubbleAtIndex(
+    index: number,
+    originAngle: number,
+    cause: 'click' | 'collision' | 'overinflate'
+  ): PopEvent {
     const b = this.bubbles[index];
+    if (b.id === this.blowingBubbleId) {
+      this.blowingBubbleId = null;
+    }
     this.bubbles.splice(index, 1);
     this.poppedTotal += 1;
 
@@ -230,7 +331,7 @@ export class BubbleSimulation {
     };
     this.pendingPopEvents.push(event);
 
-    // Phase 1: Directional rupture ring tearing open from impact/click point
+    // Phase 1: Directional rupture ring tearing open from impact/click/wand point
     if (this.rings.length >= MAX_RINGS) {
       this.rings.shift();
     }
@@ -240,13 +341,13 @@ export class BubbleSimulation {
       radius: b.radius,
       originAngle,
       age: 0,
-      duration: 0.14 + Math.min(0.08, b.radius * 0.0009),
+      duration: 0.14 + Math.min(0.14, b.radius * 0.00095),
       filmPhase: b.filmPhase,
       filmBias: b.filmThicknessBias,
     });
 
-    // Phase 2: Iridescent ASCII droplet burst around perimeter + fine mist
-    const dropletCount = Math.min(48, Math.max(18, Math.round(14 + b.radius * 0.42)));
+    // Phase 2: Iridescent ASCII droplet burst around perimeter + fine mist (more droplets for giant bubbles!)
+    const dropletCount = Math.min(76, Math.max(18, Math.round(14 + b.radius * 0.42)));
     for (let i = 0; i < dropletCount; i++) {
       if (this.particles.length >= MAX_PARTICLES) {
         this.particles.shift();
@@ -256,16 +357,14 @@ export class BubbleSimulation {
       const cosT = Math.cos(theta);
       const sinT = Math.sin(theta);
 
-      // Slight radial position jitter around the film rim
       const radialJitter = b.radius * (0.86 + this.rng() * 0.2);
       const px = b.x + cosT * radialJitter;
       const py = b.y + sinT * radialJitter;
 
-      // Droplets burst slightly faster opposite the rupture origin as the film snaps back
       const angleDiff = Math.cos(theta - originAngle);
-      const burstSpeed = (72 + this.rng() * 138) * (1.0 - angleDiff * 0.18);
+      const burstBoost = cause === 'overinflate' ? 1.18 : 1.0;
+      const burstSpeed = (72 + this.rng() * 138) * (1.0 - angleDiff * 0.18) * burstBoost;
 
-      // Inherit exact thin-film iridescent color at this perimeter angle
       const filmAngle = theta * 1.4 + b.filmPhase + b.filmThicknessBias;
       const lutIdx = sampleIridescenceIndex(filmAngle) * 3;
       const r = IRIDESCENCE_LUT[lutIdx];
@@ -281,28 +380,29 @@ export class BubbleSimulation {
         vx: cosT * burstSpeed + b.vx * 0.35 + (this.rng() - 0.5) * 28,
         vy: sinT * burstSpeed + b.vy * 0.35 + (this.rng() - 0.5) * 28,
         age: 0,
-        maxAge: isMist ? 0.52 + this.rng() * 0.42 : 0.42 + this.rng() * 0.45,
+        maxAge: isMist ? 0.54 + this.rng() * 0.45 : 0.46 + this.rng() * 0.48,
         r,
         g,
         b: bCol,
         drag: isMist ? 4.2 + this.rng() * 1.4 : 2.9 + this.rng() * 1.2,
-        gravity: isMist ? 22 + this.rng() * 18 : 42 + this.rng() * 26,
+        gravity: isMist ? 24 + this.rng() * 18 : 44 + this.rng() * 28,
         kind: isMist,
       });
     }
 
-    // Mild shockwave pushes nearby bubbles and ripples their film
+    // Shockwave pushes nearby bubbles and ripples their film
     const shockRadius = b.radius * 3.4 + 45;
     const shockRadiusSq = shockRadius * shockRadius;
     for (let i = 0; i < this.bubbles.length; i++) {
       const other = this.bubbles[i];
+      if (other.isInflating) continue;
       const dx = other.x - b.x;
       const dy = other.y - b.y;
       const dSq = dx * dx + dy * dy;
       if (dSq > 1 && dSq < shockRadiusSq) {
         const d = Math.sqrt(dSq);
         const falloff = 1 - d / shockRadius;
-        const push = (58 + b.radius * 0.75) * falloff * falloff;
+        const push = (58 + b.radius * 0.78) * falloff * falloff;
         const nx = dx / d;
         const ny = dy / d;
         other.vx += nx * push;
@@ -313,6 +413,10 @@ export class BubbleSimulation {
     }
 
     return event;
+  }
+
+  private computeGiantFactor(radius: number): number {
+    return clamp((radius - 70) / 95, 0, 1);
   }
 
   private initStars(): void {
@@ -341,7 +445,6 @@ export class BubbleSimulation {
   private createStar(): StarDust {
     const depth = 0.25 + this.rng() * 0.75;
     const glyphIdx = STAR_GLYPHS[Math.floor(this.rng() * STAR_GLYPHS.length)];
-    // Subtle cool starlight tints: ice-blue, soft lavender, pale silver
     const tintPick = this.rng();
     let r = 135;
     let g = 158;
@@ -378,7 +481,6 @@ export class BubbleSimulation {
       let x = r + this.rng() * Math.max(10, this.width - r * 2);
       let y = r + this.rng() * Math.max(10, this.height - r * 2);
 
-      // Try to place without heavy overlap
       for (let attempt = 0; attempt < 18; attempt++) {
         let overlaps = false;
         for (let j = 0; j < this.bubbles.length; j++) {
@@ -402,18 +504,16 @@ export class BubbleSimulation {
   }
 
   private pickBubbleRadius(): number {
-    // Scale radii gently to viewport so bubbles feel proportional on both phones and 4K monitors
     const minDim = Math.min(this.width, this.height);
     const scale = Math.max(0.68, Math.min(1.22, minDim / 820));
     const u = this.rng();
-    // Skewed distribution: several medium bubbles, some delicate small ones, a few hero large ones
     let base: number;
     if (u < 0.28) {
-      base = 28 + this.rng() * 16; // small (28..44)
+      base = 28 + this.rng() * 16;
     } else if (u < 0.78) {
-      base = 44 + this.rng() * 24; // medium (44..68)
+      base = 44 + this.rng() * 24;
     } else {
-      base = 68 + this.rng() * 26; // large hero (68..94)
+      base = 68 + this.rng() * 26;
     }
     return base * scale;
   }
@@ -444,6 +544,12 @@ export class BubbleSimulation {
       driftSeed: this.rng() * 100,
       age: 0,
       hoverGlow: 0,
+      isInflating: false,
+      strain: 0,
+      burstRadius: 170,
+      giantFactor: this.computeGiantFactor(startRadius),
+      wandX: x,
+      wandY: y,
     };
   }
 
@@ -461,8 +567,9 @@ export class BubbleSimulation {
   }
 
   private stepBubbles(dt: number): void {
-    const dragFactor = Math.exp(-AIR_DRAG * dt);
     const pointerSpeed = Math.hypot(this.pointerVx, this.pointerVy);
+    let overinflatedIndex = -1;
+    let overinflatedAngle = -Math.PI * 0.5;
 
     for (let i = 0; i < this.bubbles.length; i++) {
       const b = this.bubbles[i];
@@ -470,7 +577,69 @@ export class BubbleSimulation {
       b.prevY = b.y;
       b.age += dt;
 
-      // Smooth spawn inflate animation
+      // ---------------------------------------------------------------------
+      // Actively inflating bubble tethered to the cursor/touch wand
+      // ---------------------------------------------------------------------
+      if (b.isInflating) {
+        // Constant-airflow inflation: swells briskly at start, tapers gently as volume grows
+        const dR = (158 / Math.pow(Math.max(12, b.radius), 0.36)) * dt;
+        b.radius += dR;
+        b.targetRadius = b.radius;
+        b.mass = b.radius * b.radius;
+        b.giantFactor = this.computeGiantFactor(b.radius);
+
+        // Gravity sag: as the giant soap bubble grows heavier, it hangs slightly below the wand tip
+        const sagOffset = b.radius * (0.24 + b.giantFactor * 0.42);
+        const anchorX = clamp(b.wandX, b.radius * 0.35, this.width - b.radius * 0.35);
+        const anchorY = clamp(b.wandY + sagOffset, b.radius * 0.35, this.height - b.radius * 0.35);
+
+        // Elastic tether spring so gentle wand motion creates realistic trailing stretch
+        const springK = 36 - b.giantFactor * 16;
+        const tetherDamp = 9.5;
+        b.vx += ((anchorX - b.x) * springK - b.vx * tetherDamp) * dt;
+        b.vy += ((anchorY - b.y) * springK - b.vy * tetherDamp) * dt;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+
+        // Progressive surface-tension strain approaching burst limit
+        const strainStart = b.burstRadius * 0.34;
+        const baseStrain = clamp((b.radius - strainStart) / Math.max(20, b.burstRadius - strainStart), 0, 1);
+        // Whipping the wand rapidly while holding a large fragile bubble adds extra shear strain
+        const shearPenalty = b.giantFactor > 0.25 && pointerSpeed > 260
+          ? clamp((pointerSpeed - 260) / 900, 0, 0.35) * b.giantFactor
+          : 0;
+        b.strain = clamp(baseStrain + shearPenalty, 0, 1);
+
+        // Stretch axis aligns with hang/trail vector from wand tip
+        const stretchDx = b.x - b.wandX;
+        const stretchDy = b.y - b.wandY;
+        if (stretchDx * stretchDx + stretchDy * stretchDy > 4) {
+          b.wobbleAngle = Math.atan2(stretchDy, stretchDx);
+        }
+
+        // Lively liquid oscillation grows stronger as the bubble gets larger & more unstable
+        const omega = 5.0 / Math.sqrt(Math.max(0.5, b.radius / 52));
+        const targetStretch = 0.03 + b.giantFactor * 0.065 + b.strain * 0.045;
+        const harmonicDrive = Math.sin(this.time * (3.2 + b.strain * 4.5) + b.driftSeed) * (0.04 + b.strain * 0.09);
+        const wobbleAcc = -(omega * omega) * (b.wobbleAmp - targetStretch) - 1.9 * b.wobbleVel + harmonicDrive;
+        b.wobbleVel += wobbleAcc * dt;
+        b.wobbleAmp = clamp(b.wobbleAmp + b.wobbleVel * dt, -0.22, 0.24);
+
+        b.filmPhase += (b.filmSpin * (1 + b.strain * 1.4) + 0.35) * dt;
+        b.wobblePhase3 += (1.1 + b.giantFactor * 1.4 + b.strain * 1.8) * dt;
+        b.hoverGlow = 0.35 + b.strain * 0.45;
+
+        // Burst directly on the wand if over-inflated (or sheared past breaking point)!
+        if (b.radius >= b.burstRadius || b.strain >= 1) {
+          overinflatedIndex = i;
+          overinflatedAngle = Math.atan2(b.wandY - b.y, b.wandX - b.x);
+        }
+        continue;
+      }
+
+      // ---------------------------------------------------------------------
+      // Free-floating bubble physics (lightweight normal vs heavy giant)
+      // ---------------------------------------------------------------------
       if (b.radius < b.targetRadius) {
         const diff = b.targetRadius - b.radius;
         b.radius += diff * Math.min(1, dt * 8.5);
@@ -480,21 +649,29 @@ export class BubbleSimulation {
         b.mass = b.radius * b.radius;
       }
 
-      // 1. Slow organic air-current field (curl-like multi-sine microgravity drift)
+      b.giantFactor = this.computeGiantFactor(b.radius);
+      const gf = b.giantFactor;
+
+      // 1. Organic air currents + realistic weight/buoyancy:
+      //    Small bubbles drift lightly with tiny upward lift; giant bubbles feel noticeably heavier & slower!
       const t = this.time;
+      const currentScale = 1 - gf * 0.38;
       const fx =
-        Math.sin(b.y * 0.0042 + t * 0.34 + b.driftSeed) * 12.5 +
-        Math.cos(b.x * 0.0031 - t * 0.23 + b.driftSeed * 1.7) * 7.5;
+        (Math.sin(b.y * 0.0042 + t * 0.34 + b.driftSeed) * 12.5 +
+          Math.cos(b.x * 0.0031 - t * 0.23 + b.driftSeed * 1.7) * 7.5) *
+        currentScale;
+      const weightPull = -1.4 + gf * 11.2; // small: gentle upward lift; giant: slow heavy downward glide
       const fy =
-        Math.cos(b.x * 0.0038 + t * 0.29 + b.driftSeed * 0.8) * 12.0 +
-        Math.sin(b.y * 0.0034 + t * 0.21 - b.driftSeed) * 6.5 -
-        1.4; // feather-light upward buoyancy hint
+        (Math.cos(b.x * 0.0038 + t * 0.29 + b.driftSeed * 0.8) * 12.0 +
+          Math.sin(b.y * 0.0034 + t * 0.21 - b.driftSeed) * 6.5) *
+          currentScale +
+        weightPull;
 
       b.vx += fx * dt;
       b.vy += fy * dt;
 
-      // 2. Cursor/touch air current & hover highlight
-      if (this.pointerActive) {
+      // 2. Cursor/touch air current & hover highlight (giant bubbles have more inertia against gusts)
+      if (this.pointerActive && this.blowingBubbleId === null) {
         const dx = b.x - this.pointerX;
         const dy = b.y - this.pointerY;
         const distSq = dx * dx + dy * dy;
@@ -508,95 +685,113 @@ export class BubbleSimulation {
           const dist = Math.sqrt(distSq) || 1;
           const falloff = 1 - dist / maxR;
           const weight = falloff * falloff;
+          const inertiaFactor = 1 - gf * 0.52;
 
-          // Entrainment: air dragged along pointer velocity vector
-          const airForce = 2.65 * weight;
+          const airForce = 2.65 * weight * inertiaFactor;
           b.vx += this.pointerVx * airForce * dt;
           b.vy += this.pointerVy * airForce * dt;
 
-          // Bow-wave push: fast cursor also parts bubbles out of its immediate path
           if (dist < b.radius + 54) {
-            const bow = Math.min(480, pointerSpeed * 0.55) * weight * 1.7;
+            const bow = Math.min(480, pointerSpeed * 0.55) * weight * 1.7 * inertiaFactor;
             b.vx += (dx / dist) * bow * dt;
             b.vy += (dy / dist) * bow * dt;
           }
 
-          // Subtle wobble ripple from wind gust
-          if (pointerSpeed > 180) {
+          if (pointerSpeed > 160) {
             b.wobbleAngle = Math.atan2(this.pointerVy, this.pointerVx);
-            b.wobbleVel += Math.min(0.8, pointerSpeed * 0.0012) * weight * dt * 18;
+            b.wobbleVel += Math.min(0.95, pointerSpeed * 0.0014) * (1 + gf * 0.8) * weight * dt * 18;
           }
         }
       } else if (b.hoverGlow > 0.001) {
         b.hoverGlow *= Math.exp(-8 * dt);
       }
 
-      // 3. Gentle air resistance (fast pushes coast smoothly, then settle into serene float)
+      // 3. Air resistance (larger cross-section = heavier viscous drag so giant bubbles glide serenely)
+      const dragFactor = Math.exp(-AIR_DRAG * (1 + gf * 0.65) * dt);
       b.vx *= dragFactor;
       b.vy *= dragFactor;
 
-      // Speed cap for numerical stability
       const speed = Math.hypot(b.vx, b.vy);
-      if (speed > 620) {
-        const clamp = 620 / speed;
-        b.vx *= clamp;
-        b.vy *= clamp;
+      const maxSpeed = 620 - gf * 240;
+      if (speed > maxSpeed) {
+        const speedClamp = maxSpeed / speed;
+        b.vx *= speedClamp;
+        b.vy *= speedClamp;
       }
 
       // 4. Integrate position
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
-      // 5. Soft elastic wall bounce with film squash
+      // 5. Soft elastic wall bounce (giant bubbles cushion softer & squish dramatically on walls/floor)
       const r = b.radius;
+      const wallRestitution = WALL_RESTITUTION - gf * 0.18;
+      const wallSquashScale = 0.0042 + gf * 0.0048;
+
       if (b.x < r) {
         b.x = r;
         const impact = Math.abs(b.vx);
-        b.vx = impact * WALL_RESTITUTION;
-        this.exciteWobble(b, 0, impact * 0.0042);
+        b.vx = impact * wallRestitution;
+        this.exciteWobble(b, 0, impact * wallSquashScale);
       } else if (b.x > this.width - r) {
         b.x = this.width - r;
         const impact = Math.abs(b.vx);
-        b.vx = -impact * WALL_RESTITUTION;
-        this.exciteWobble(b, Math.PI, impact * 0.0042);
+        b.vx = -impact * wallRestitution;
+        this.exciteWobble(b, Math.PI, impact * wallSquashScale);
       }
 
       if (b.y < r) {
         b.y = r;
         const impact = Math.abs(b.vy);
-        b.vy = impact * WALL_RESTITUTION;
-        this.exciteWobble(b, Math.PI * 0.5, impact * 0.0042);
+        b.vy = impact * wallRestitution;
+        this.exciteWobble(b, Math.PI * 0.5, impact * wallSquashScale);
       } else if (b.y > this.height - r) {
         b.y = this.height - r;
         const impact = Math.abs(b.vy);
-        b.vy = -impact * WALL_RESTITUTION;
-        this.exciteWobble(b, -Math.PI * 0.5, impact * 0.0042);
+        b.vy = -impact * wallRestitution;
+        this.exciteWobble(b, -Math.PI * 0.5, impact * wallSquashScale);
       }
 
-      // 6. Iridescent soap-film swirl rotation & surface-tension spring wobble
-      b.filmPhase += (b.filmSpin + speed * 0.0045) * dt;
-      b.wobblePhase3 += (0.85 + speed * 0.006) * dt;
+      // 6. Iridescent soap-film swirl & slow deep surface-tension wobble for giant bubbles
+      b.filmPhase += (b.filmSpin * (1 + gf * 0.3) + speed * 0.0045) * dt;
+      b.wobblePhase3 += (0.85 + gf * 0.45 + speed * 0.006) * dt;
 
-      // Natural harmonic frequency inversely proportional to sqrt(radius)
+      // Natural harmonic frequency inversely proportional to sqrt(radius): giant bubbles undulate slowly!
       const omega = 5.4 / Math.sqrt(Math.max(0.45, b.radius / 50));
-      const damping = 2.6;
-      const wobbleAcc = -(omega * omega) * b.wobbleAmp - damping * b.wobbleVel;
+      const damping = 2.6 - gf * 1.15; // giant soap film keeps sloshing longer before settling!
+      // Slight aerodynamic flattening perpendicular to motion + slow organic giant slosh
+      const aeroTarget = gf > 0.05 && speed > 4 ? -clamp(speed * 0.0014 * gf, 0, 0.065) : 0;
+      const organicDrive =
+        gf > 0.05 ? Math.sin(t * (1.55 - gf * 0.45) + b.driftSeed) * gf * 0.95 : 0;
+
+      if (gf > 0.25 && speed > 14 && Math.abs(b.wobbleVel) < 0.25) {
+        // Gently orient aerodynamic flattening with drift direction when calm
+        const velAngle = Math.atan2(b.vy, b.vx);
+        const angleDelta = Math.atan2(Math.sin(velAngle - b.wobbleAngle), Math.cos(velAngle - b.wobbleAngle));
+        b.wobbleAngle += angleDelta * Math.min(1, dt * 1.4);
+      }
+
+      const wobbleAcc = -(omega * omega) * (b.wobbleAmp - aeroTarget) - damping * b.wobbleVel + organicDrive;
       b.wobbleVel += wobbleAcc * dt;
       b.wobbleAmp += b.wobbleVel * dt;
-      // Soft ambient breathing baseline so floating bubbles never look dead-rigid
-      b.wobbleAmp = Math.max(-0.16, Math.min(0.16, b.wobbleAmp));
+      const maxWobble = 0.16 + gf * 0.09;
+      b.wobbleAmp = clamp(b.wobbleAmp, -maxWobble, maxWobble);
+    }
+
+    if (overinflatedIndex !== -1 && overinflatedIndex < this.bubbles.length) {
+      this.popBubbleAtIndex(overinflatedIndex, overinflatedAngle, 'overinflate');
     }
   }
 
   private exciteWobble(b: Bubble, angle: number, impulse: number): void {
-    const clamped = Math.min(1.4, impulse);
+    const clamped = Math.min(1.6, impulse);
     if (clamped < 0.04) return;
     b.wobbleAngle = angle;
-    b.wobbleVel -= clamped; // negative = initial squash along collision axis
+    b.wobbleVel -= clamped;
   }
 
   private resolveBubbleCollisions(): void {
-    const toPop = new Map<number, number>(); // index -> originAngle
+    const toPop = new Map<number, number>();
 
     for (let i = 0; i < this.bubbles.length; i++) {
       if (toPop.has(i)) continue;
@@ -617,30 +812,26 @@ export class BubbleSimulation {
         const nx = dx / dist;
         const ny = dy / dist;
 
-        // Relative velocity of b with respect to a along collision normal
         const rvx = b.vx - a.vx;
         const rvy = b.vy - a.vy;
         const relNormalVel = rvx * nx + rvy * ny;
         const impactSpeed = -relNormalVel;
 
-        // Check hard collision pop threshold (only when approaching each other)
+        // If an inflating giant bubble gets bumped hard by another bubble, it can burst easily
         if (impactSpeed > 0) {
           const largerIsA = a.radius >= b.radius;
           const fragileRadius = largerIsA ? a.radius : b.radius;
           const threshold = this.getCollisionPopThreshold(fragileRadius);
 
           if (impactSpeed >= EXTREME_IMPACT_SPEED) {
-            const angleA = Math.atan2(ny, nx);
-            const angleB = Math.atan2(-ny, -nx);
-            toPop.set(i, angleA);
-            toPop.set(j, angleB);
+            toPop.set(i, Math.atan2(ny, nx));
+            toPop.set(j, Math.atan2(-ny, -nx));
             continue;
           }
 
           if (impactSpeed >= threshold) {
             if (largerIsA) {
               toPop.set(i, Math.atan2(ny, nx));
-              // Survivor gets light elastic recoil and wobble
               b.vx += nx * impactSpeed * 0.25;
               b.vy += ny * impactSpeed * 0.25;
               this.exciteWobble(b, Math.atan2(-ny, -nx), 0.75);
@@ -657,8 +848,8 @@ export class BubbleSimulation {
         // Soft collision -> elastic positional separation + momentum bounce + squash wobble
         const overlap = minDist - dist;
         const totalMass = a.mass + b.mass;
-        const shareA = b.mass / totalMass;
-        const shareB = a.mass / totalMass;
+        const shareA = a.isInflating ? 0.15 : b.isInflating ? 0.85 : b.mass / totalMass;
+        const shareB = 1 - shareA;
 
         a.x -= nx * overlap * shareA;
         a.y -= ny * overlap * shareA;
@@ -669,21 +860,24 @@ export class BubbleSimulation {
           const jImpulse = (-(1 + BUBBLE_RESTITUTION) * relNormalVel) / (1 / a.mass + 1 / b.mass);
           const ix = jImpulse * nx;
           const iy = jImpulse * ny;
-          a.vx -= ix / a.mass;
-          a.vy -= iy / a.mass;
-          b.vx += ix / b.mass;
-          b.vy += iy / b.mass;
+          if (!a.isInflating) {
+            a.vx -= ix / a.mass;
+            a.vy -= iy / a.mass;
+          }
+          if (!b.isInflating) {
+            b.vx += ix / b.mass;
+            b.vy += iy / b.mass;
+          }
 
-          const wobbleKick = Math.min(1.15, impactSpeed * 0.0075);
+          const wobbleKick = Math.min(1.25, impactSpeed * 0.0078);
           const angleNormal = Math.atan2(ny, nx);
-          this.exciteWobble(a, angleNormal, wobbleKick);
-          this.exciteWobble(b, angleNormal + Math.PI, wobbleKick);
+          this.exciteWobble(a, angleNormal, wobbleKick * (1 + a.giantFactor * 0.45));
+          this.exciteWobble(b, angleNormal + Math.PI, wobbleKick * (1 + b.giantFactor * 0.45));
         }
       }
     }
 
     if (toPop.size > 0) {
-      // Pop from highest index down so splicing never invalidates remaining indices
       const sorted = Array.from(toPop.entries()).sort((u, v) => v[0] - u[0]);
       for (let k = 0; k < sorted.length; k++) {
         const [idx, angle] = sorted[k];
@@ -735,7 +929,6 @@ export class BubbleSimulation {
     this.respawnTimer = 0;
 
     const r = this.pickBubbleRadius();
-    // Spawn gently from a random viewport edge drifting inward
     const edge = Math.floor(this.rng() * 4);
     let x = this.width * 0.5;
     let y = this.height * 0.5;
@@ -743,25 +936,21 @@ export class BubbleSimulation {
     let vy = 0;
 
     if (edge === 0) {
-      // Bottom edge drifting gently up
       x = r + this.rng() * Math.max(10, this.width - r * 2);
       y = this.height - r - 2;
       vx = (this.rng() - 0.5) * 18;
       vy = -(16 + this.rng() * 18);
     } else if (edge === 1) {
-      // Left edge drifting gently right
       x = r + 2;
       y = r + this.rng() * Math.max(10, this.height - r * 2);
       vx = 16 + this.rng() * 18;
       vy = (this.rng() - 0.5) * 18;
     } else if (edge === 2) {
-      // Right edge drifting gently left
       x = this.width - r - 2;
       y = r + this.rng() * Math.max(10, this.height - r * 2);
       vx = -(16 + this.rng() * 18);
       vy = (this.rng() - 0.5) * 18;
     } else {
-      // Top edge drifting gently down
       x = r + this.rng() * Math.max(10, this.width - r * 2);
       y = r + 2;
       vx = (this.rng() - 0.5) * 18;

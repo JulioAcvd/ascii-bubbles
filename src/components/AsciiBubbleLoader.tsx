@@ -355,6 +355,25 @@ export function AsciiBubbleLoader({
   }, [settings.rendererMode]);
 
   const lastMoveTimeRef = useRef<number>(0);
+  const blowingPointerIdRef = useRef<number | null>(null);
+  const touchHoldTimerRef = useRef<number | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+
+  const clearTouchHold = () => {
+    if (touchHoldTimerRef.current !== null) {
+      window.clearTimeout(touchHoldTimerRef.current);
+      touchHoldTimerRef.current = null;
+    }
+    touchStartRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (touchHoldTimerRef.current !== null) {
+        window.clearTimeout(touchHoldTimerRef.current);
+      }
+    };
+  }, []);
 
   const getLocalCoords = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -373,6 +392,19 @@ export function AsciiBubbleLoader({
     lastMoveTimeRef.current = now;
     const { x, y } = getLocalCoords(e);
     sim.setPointer(x, y, true, dt);
+
+    if (blowingPointerIdRef.current === e.pointerId) {
+      sim.updateBlowingPosition(x, y);
+      return;
+    }
+
+    // Cancel pending touch long-press if finger moves briskly (user is swiping air currents)
+    if (touchStartRef.current && touchStartRef.current.pointerId === e.pointerId) {
+      const dist = Math.hypot(x - touchStartRef.current.x, y - touchStartRef.current.y);
+      if (dist > 14) {
+        clearTouchHold();
+      }
+    }
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -381,6 +413,54 @@ export function AsciiBubbleLoader({
     if (!sim) return;
     const { x, y } = getLocalCoords(e);
     sim.setPointer(x, y, true, FIXED_DT);
+
+    // Desktop right-click hold: blow a growing soap bubble from the cursor tip!
+    if (e.button === 2) {
+      e.preventDefault();
+      clearTouchHold();
+      blowingPointerIdRef.current = e.pointerId;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore if capture is unsupported
+      }
+      sim.startBlowing(x, y);
+      return;
+    }
+
+    // Ignore middle-click or other secondary buttons
+    if (e.button !== 0) return;
+
+    // On touchscreens: quick tap pops a bubble or spawns one; holding empty space (~220ms) blows a giant bubble!
+    if (e.pointerType === 'touch') {
+      const hitIdx = sim.hitTestBubble(x, y);
+      if (hitIdx !== -1) {
+        const result = sim.handlePointerDown(x, y);
+        if (result.action === 'popped' && result.popEvent) {
+          const drained = sim.drainPopEvents();
+          for (const ev of drained) {
+            audioRef.current?.playPop(ev.radius, ev.cause);
+            onPopRef.current?.(ev);
+          }
+        }
+        return;
+      }
+
+      clearTouchHold();
+      touchStartRef.current = { x, y, pointerId: e.pointerId };
+      touchHoldTimerRef.current = window.setTimeout(() => {
+        touchHoldTimerRef.current = null;
+        const activeSim = simRef.current;
+        const start = touchStartRef.current;
+        if (!activeSim || !start) return;
+        blowingPointerIdRef.current = start.pointerId;
+        touchStartRef.current = null;
+        activeSim.startBlowing(activeSim.pointerX, activeSim.pointerY);
+      }, 220);
+      return;
+    }
+
+    // Desktop left-click: pop bubble or quick-spawn on empty space
     const result = sim.handlePointerDown(x, y);
     if (result.action === 'popped' && result.popEvent) {
       const drained = sim.drainPopEvents();
@@ -391,9 +471,38 @@ export function AsciiBubbleLoader({
     }
   };
 
-  const handlePointerLeave = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const sim = simRef.current;
+
+    if (blowingPointerIdRef.current === e.pointerId) {
+      blowingPointerIdRef.current = null;
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        // Ignore
+      }
+      sim?.releaseBlowing();
+      return;
+    }
+
+    // Quick touch tap on empty space (lifted before 220ms hold threshold) -> spawn normal bubble
+    if (touchStartRef.current && touchStartRef.current.pointerId === e.pointerId) {
+      const { x, y } = touchStartRef.current;
+      clearTouchHold();
+      sim?.handlePointerDown(x, y);
+    }
+  };
+
+  const handlePointerLeave = (e: React.PointerEvent<HTMLDivElement>) => {
     const sim = simRef.current;
     if (!sim) return;
+    if (blowingPointerIdRef.current === e.pointerId && !e.currentTarget.hasPointerCapture(e.pointerId)) {
+      blowingPointerIdRef.current = null;
+      sim.releaseBlowing();
+    }
+    clearTouchHold();
     sim.setPointer(sim.pointerX, sim.pointerY, false);
     lastMoveTimeRef.current = 0;
   };
@@ -402,10 +511,15 @@ export function AsciiBubbleLoader({
     <div
       ref={containerRef}
       className={`ascii-bubble-loader ${className}`.trim()}
+      onContextMenu={(e) => e.preventDefault()}
       onPointerMove={handlePointerMove}
       onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
-      onPointerCancel={handlePointerLeave}
+      onPointerCancel={(e) => {
+        handlePointerUp(e);
+        handlePointerLeave(e);
+      }}
     >
       <canvas
         key={settings.rendererMode}

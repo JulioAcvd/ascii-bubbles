@@ -6,9 +6,10 @@ Pantalla de carga interactiva hecha completamente con caracteres ASCII clásicos
 
 - **Física realista en paso fijo (`120Hz`) con interpolación**: flotación orgánica en microgravedad, rebote elástico con deformación (*squash & wobble*), choques fuertes que hacen estallar la burbuja más frágil (o ambas en impactos extremos) y onda expansiva sobre burbujas vecinas.
 - **Interacción mouse y táctil**:
-  - Click / toque en una burbuja → explota desde el punto de impacto con anillo de ruptura (`* + x ~`) y gotículas iridiscentes (`* -> + -> : -> . -> '`).
+  - Click izquierdo / toque en una burbuja → explota desde el punto de impacto con anillo de ruptura (`* + x ~`) y gotículas iridiscentes (`* -> + -> : -> . -> '`).
+  - **Sostener click derecho** *(o mantener presionado en móvil)* → sopla y hace crecer una burbuja gigante desde el cursor; al crecer se vuelve más pesada, blanda e inestable, y si sigues soplando demasiado tiempo estalla antes de flotar. Al soltar, se desprende con rebote elástico y flota según su peso.
   - Mover el cursor / dedo → corriente de aire proporcional a tu velocidad para empujar y hacer chocar burbujas.
-  - Click en espacio vacío → sopla una nueva burbuja.
+  - Click izquierdo en espacio vacío → sopla una nueva burbuja rápida.
 - **Alto rendimiento (60Hz hasta 240Hz+)**: renderizador **WebGL2 instanciado** (1 *draw call* por frame sobre atlas de glifos *JetBrains Mono*) con **fallback automático a Canvas 2D** y escalado adaptativo opcional.
 - **Personalización en vivo (`[cfg]` o tecla `F`)**:
   - 5 estilos ASCII para las burbujas (**Realista**, **Original**, **Cristalino**, **Denso**, **Orgánico**) + slider de deformación.

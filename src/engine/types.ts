@@ -51,6 +51,17 @@ export interface Bubble {
   driftSeed: number;
   age: number;
   hoverGlow: number;
+  /** True while the user is actively blowing/inflating this bubble on the cursor/touch wand */
+  isInflating: boolean;
+  /** Surface-tension strain [0..1] approaching over-inflation burst */
+  strain: number;
+  /** Maximum radius this bubble can reach while blowing before snapping */
+  burstRadius: number;
+  /** Normalized giant-size factor [0..1] driving heavier float & deeper liquid deformation */
+  giantFactor: number;
+  /** Current wand tip anchor while inflating */
+  wandX: number;
+  wandY: number;
 }
 
 export interface RuptureRing {
@@ -99,7 +110,7 @@ export interface PopEvent {
   x: number;
   y: number;
   radius: number;
-  cause: 'click' | 'collision';
+  cause: 'click' | 'collision' | 'overinflate';
 }
 
 export interface GridBuffer {

@@ -357,10 +357,14 @@ export function rasterizeScene(
     const r0 = b.radius;
     if (r0 < 3) continue;
 
-    // Organic style gets a slight extra soft bounce feel
+    // Organic style & giant blown bubbles get deeper, slower multi-harmonic liquid deformation
     const styleWobbleMul = bubbleStyle === 'organic' ? wobbleScale * 1.35 : wobbleScale;
-    const wobbleAmp = Math.max(-0.22, Math.min(0.22, b.wobbleAmp * styleWobbleMul));
-    const maxExtent = r0 * (1.06 + Math.abs(wobbleAmp) + 0.03 * styleWobbleMul);
+    const gf = b.giantFactor;
+    const strain = b.strain;
+    const wobbleAmp = Math.max(-0.26, Math.min(0.26, b.wobbleAmp * styleWobbleMul));
+    const mode3Amp = (0.014 + gf * 0.044 + strain * 0.032) * styleWobbleMul;
+    const tremorAmp = b.isInflating && strain > 0.62 ? (strain - 0.62) * 0.055 * styleWobbleMul : 0;
+    const maxExtent = r0 * (1.06 + Math.abs(wobbleAmp) + mode3Amp + tremorAmp + 0.02);
 
     const minCol = Math.max(0, Math.floor((bx - maxExtent) * invCellW));
     const maxCol = Math.min(cols - 1, Math.ceil((bx + maxExtent) * invCellW));
@@ -372,7 +376,7 @@ export function rasterizeScene(
     const filmPhase = b.filmPhase;
     const filmBias = b.filmThicknessBias;
     const hoverBoost = b.hoverGlow * 0.16;
-    const mode3Amp = 0.014 * styleWobbleMul;
+    const tremorPhase = sim.time * 44;
     // Crisp sub-cell anti-aliasing band width (softens outermost silhouette without dimming the rim peak)
     const aaBand = Math.max(0.035, Math.min(0.085, (cellW * 0.85) / r0));
 
@@ -394,7 +398,8 @@ export function rasterizeScene(
         const wobble =
           1 +
           wobbleAmp * Math.cos(2 * (theta - wobbleAngle)) +
-          mode3Amp * Math.sin(3 * theta + wobblePhase3);
+          mode3Amp * Math.sin(3 * theta + wobblePhase3) +
+          (tremorAmp > 0 ? tremorAmp * Math.sin(4 * theta + tremorPhase) : 0);
         const effR = r0 * wobble;
         const r = dist / effR;
         if (r > 1.03) continue;
@@ -548,6 +553,20 @@ export function rasterizeScene(
         }
 
         blendCell(grid, rowOffset + col, chosenGlyph, irR, irG, irB, cellAlpha);
+      }
+    }
+
+    // Subtle wand-tip nozzle spark while actively blowing/inflating a bubble
+    if (b.isInflating) {
+      const wCol = Math.floor(b.wandX * invCellW);
+      const wRow = Math.floor(b.wandY * invCellH);
+      if (wCol >= 0 && wCol < cols && wRow >= 0 && wRow < rows) {
+        const warn = strain > 0.72;
+        const nozzleGlyph = warn ? (Math.sin(sim.time * 32) > 0 ? GLYPH.STAR : GLYPH.PLUS) : GLYPH.LOWER_O;
+        const nr = warn ? 255 : 210;
+        const ng = warn ? 215 : 244;
+        const nb = warn ? 245 : 255;
+        blendCell(grid, wRow * cols + wCol, nozzleGlyph, nr, ng, nb, 0.78 + strain * 0.2);
       }
     }
   }

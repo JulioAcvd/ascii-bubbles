@@ -157,4 +157,63 @@ describe('BubbleSimulation physics', () => {
 
     expect(sim.bubbles.length).toBeGreaterThanOrEqual(5);
   });
+
+  it('grows a giant bubble while blowing and releases it with realistic weight and pinch-off wobble', () => {
+    const sim = new BubbleSimulation({ width: 1200, height: 800, targetBubbleCount: 1, seed: 55 });
+    sim.bubbles.length = 0;
+
+    const blown = sim.startBlowing(600, 320);
+    expect(blown.isInflating).toBe(true);
+    expect(sim.isBlowing()).toBe(true);
+
+    // Hold for ~2.2 seconds -> grows into a large/giant bubble without bursting yet
+    for (let i = 0; i < 264; i++) {
+      sim.step(FIXED_DT);
+    }
+
+    expect(sim.isBlowing()).toBe(true);
+    expect(blown.radius).toBeGreaterThan(95);
+    expect(blown.giantFactor).toBeGreaterThan(0.25);
+    expect(blown.strain).toBeGreaterThan(0.15);
+    // Heavy giant soap bubble hangs slightly below the wand tip
+    expect(blown.y).toBeGreaterThan(320 + 10);
+
+    const released = sim.releaseBlowing();
+    expect(released?.id).toBe(blown.id);
+    expect(released?.isInflating).toBe(false);
+    expect(sim.isBlowing()).toBe(false);
+    expect(Math.abs(released?.wobbleVel ?? 0)).toBeGreaterThan(0.5);
+  });
+
+  it('bursts a blown bubble right on the wand if held too long (over-inflation)', () => {
+    const sim = new BubbleSimulation({ width: 1200, height: 800, targetBubbleCount: 1, seed: 61 });
+    sim.bubbles.length = 0;
+
+    sim.startBlowing(600, 350);
+
+    // Hold continuously for 6 seconds -> guaranteed to exceed burstRadius and snap on the wand
+    let overinflateEvent = null;
+    for (let i = 0; i < 720; i++) {
+      sim.step(FIXED_DT);
+      const events = sim.drainPopEvents();
+      const found = events.find((e) => e.cause === 'overinflate');
+      if (found) {
+        overinflateEvent = found;
+        break;
+      }
+    }
+
+    expect(overinflateEvent).not.toBeNull();
+    expect(overinflateEvent?.cause).toBe('overinflate');
+    expect(sim.isBlowing()).toBe(false);
+    expect(sim.rings.length).toBeGreaterThanOrEqual(1);
+    expect(sim.particles.length).toBeGreaterThan(40);
+  });
+
+  it('makes giant bubbles noticeably more fragile on impact than small bubbles', () => {
+    const sim = new BubbleSimulation({ width: 1200, height: 800, targetBubbleCount: 1, seed: 73 });
+    const smallThreshold = sim.getCollisionPopThreshold(32);
+    const giantThreshold = sim.getCollisionPopThreshold(155);
+    expect(giantThreshold).toBeLessThan(smallThreshold * 0.65);
+  });
 });
