@@ -20,7 +20,6 @@ export class Canvas2DAsciiRenderer implements AsciiRenderer {
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d', {
       alpha: false,
-      desynchronized: true,
     });
     if (!ctx) {
       throw new Error('Canvas 2D context unavailable');

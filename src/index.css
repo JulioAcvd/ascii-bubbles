@@ -22,6 +22,7 @@ body,
   padding: 0;
   width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   background-color: var(--bg);
   font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
@@ -273,4 +274,34 @@ body,
 .ascii-debug-checkbox input {
   margin-top: 2px;
   accent-color: var(--accent);
+}
+
+/* Responsive mobile layout: zero HUD overlap & safe-area aware */
+@media (max-width: 640px) {
+  .ascii-loader-status {
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    font-size: 11px;
+    max-width: calc(100vw - 24px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ascii-corner-hud {
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    bottom: auto;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: rgba(7, 9, 15, 0.45);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  .ascii-debug-panel {
+    top: calc(50px + env(safe-area-inset-top, 0px));
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 108px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
 }

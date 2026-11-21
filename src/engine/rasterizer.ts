@@ -405,13 +405,13 @@ export function rasterizeScene(
         const ny = dy * invEffR;
         const nz = Math.sqrt(Math.max(0, 1 - rClamped * rClamped));
 
-        // 1. Fresnel reflectance (crystal-clear hollow center, luminous soap rim)
+        // 1. Fresnel reflectance (crystal-clear hollow center, continuous 360° luminous soap rim)
         const rimCurve =
           bubbleStyle === 'dense'
             ? Math.pow(1 - nz, 1.05) * 0.78 + Math.pow(rClamped, 3.4) * 0.36
             : bubbleStyle === 'crystalline'
-              ? Math.pow(1 - nz, 1.85) * 0.65 + Math.pow(rClamped, 7.5) * 0.52
-              : Math.pow(1 - nz, 1.35) * 0.72 + Math.pow(rClamped, 5.0) * 0.42;
+              ? Math.pow(1 - nz, 1.65) * 0.72 + Math.pow(rClamped, 6.2) * 0.52
+              : Math.pow(1 - nz, 1.2) * 0.76 + Math.pow(rClamped, 4.4) * 0.46;
         const fresnel = Math.min(1.0, 0.03 + rimCurve);
 
         // 2. Dual specular light reflections + subtle overhead curved window reflection
@@ -442,7 +442,7 @@ export function rasterizeScene(
 
         const shimmerWave = 0.5 + 0.5 * Math.sin(filmOpticalPhase * 1.6);
         const rimEnergy =
-          fresnel * (0.76 + 0.28 * shimmerWave) +
+          fresnel * (0.88 + 0.24 * shimmerWave) +
           spec1 * 1.15 +
           specBroad +
           spec2 +

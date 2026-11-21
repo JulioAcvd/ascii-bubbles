@@ -194,7 +194,6 @@ export class WebGL2AsciiRenderer implements AsciiRenderer {
         depth: false,
         stencil: false,
         powerPreference: 'high-performance',
-        desynchronized: true,
       });
       if (!gl) return null;
       return new WebGL2AsciiRenderer(canvas, gl);

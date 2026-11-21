@@ -30,16 +30,19 @@ export interface AsciiBubbleLoaderProps {
   onPop?: (event: PopEvent) => void;
 }
 
-const DEFAULT_SETTINGS: RenderSettings = {
-  fontSize: 12,
-  rendererMode: 'auto',
-  adaptiveQuality: true,
-  targetBubbleCount: 18,
-  bubbleStyle: 'realistic',
-  backgroundStyle: 'atmosphere',
-  backgroundOpacity: 0.65,
-  wobbleIntensity: 1.0,
-};
+function getResponsiveDefaults(): RenderSettings {
+  const isCompact = typeof window !== 'undefined' && window.innerWidth < 640;
+  return {
+    fontSize: isCompact ? 10 : 12,
+    rendererMode: 'auto',
+    adaptiveQuality: true,
+    targetBubbleCount: isCompact ? 10 : 18,
+    bubbleStyle: 'realistic',
+    backgroundStyle: 'atmosphere',
+    backgroundOpacity: 0.65,
+    wobbleIntensity: 1.0,
+  };
+}
 
 function snapHz(rawHz: number): number {
   const standards = [60, 75, 90, 120, 144, 165, 180, 240, 360];
@@ -76,11 +79,14 @@ export function AsciiBubbleLoader({
   const [muted, setMuted] = useState(initialMuted);
   const [debugOpen, setDebugOpen] = useState(false);
   const [cornerFps, setCornerFps] = useState(0);
-  const [settings, setSettings] = useState<RenderSettings>(() => ({
-    ...DEFAULT_SETTINGS,
-    ...initialSettings,
-    targetBubbleCount: bubbleCount ?? initialSettings?.targetBubbleCount ?? DEFAULT_SETTINGS.targetBubbleCount,
-  }));
+  const [settings, setSettings] = useState<RenderSettings>(() => {
+    const defaults = getResponsiveDefaults();
+    return {
+      ...defaults,
+      ...initialSettings,
+      targetBubbleCount: bubbleCount ?? initialSettings?.targetBubbleCount ?? defaults.targetBubbleCount,
+    };
+  });
 
   const [telemetry, setTelemetry] = useState<Telemetry>({
     fps: 0,
