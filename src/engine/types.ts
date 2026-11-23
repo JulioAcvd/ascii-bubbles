@@ -5,6 +5,14 @@ export type BubbleStyle = 'realistic' | 'classic' | 'crystalline' | 'dense' | 'o
 
 export type BackgroundStyle = 'atmosphere' | 'currents' | 'nebula' | 'grid' | 'mist' | 'none';
 
+export type CrtMode = 'off' | 'subtle' | 'classic' | 'arcade';
+
+export interface CrtRenderParams {
+  mode: CrtMode;
+  intensity: number;
+  time: number;
+}
+
 export interface RenderSettings {
   fontSize: number;
   rendererMode: RendererMode;
@@ -14,6 +22,8 @@ export interface RenderSettings {
   backgroundStyle: BackgroundStyle;
   backgroundOpacity: number;
   wobbleIntensity: number;
+  crtMode: CrtMode;
+  crtIntensity: number;
 }
 
 export interface Telemetry {

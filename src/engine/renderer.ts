@@ -1,11 +1,11 @@
 import { Canvas2DAsciiRenderer } from './canvas2dRenderer';
-import type { ActiveBackend, GridBuffer, RendererMode } from './types';
+import type { ActiveBackend, CrtRenderParams, GridBuffer, RendererMode } from './types';
 import { WebGL2AsciiRenderer } from './webgl2Renderer';
 
 export interface AsciiRenderer {
   readonly backend: ActiveBackend;
   resize(width: number, height: number, dpr: number, fontSize: number): void;
-  render(grid: GridBuffer): void;
+  render(grid: GridBuffer, crt?: CrtRenderParams): void;
   dispose(): void;
 }
 

@@ -1,7 +1,7 @@
 import { MONO_FONT_FAMILY } from './glyphAtlas';
 import { BACKGROUND_HEX, GLYPH, GLYPH_CHARS } from './palette';
 import type { AsciiRenderer } from './renderer';
-import type { ActiveBackend, GridBuffer } from './types';
+import type { ActiveBackend, CrtRenderParams, GridBuffer } from './types';
 
 /**
  * Optimized Canvas 2D ASCII fallback renderer.
@@ -47,7 +47,7 @@ export class Canvas2DAsciiRenderer implements AsciiRenderer {
     this.ctx.textBaseline = 'middle';
   }
 
-  render(grid: GridBuffer): void {
+  render(grid: GridBuffer, _crt?: CrtRenderParams): void {
     const ctx = this.ctx;
     const { cols, rows, cellW, cellH, glyphIdx, rgba } = grid;
 

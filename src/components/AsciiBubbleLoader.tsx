@@ -4,7 +4,7 @@ import { measureCellMetrics } from '../engine/glyphAtlas';
 import { BubbleSimulation, FIXED_DT } from '../engine/physics';
 import { createGridBuffer, rasterizeScene } from '../engine/rasterizer';
 import { createAsciiRenderer, type AsciiRenderer } from '../engine/renderer';
-import type { GridBuffer, PopEvent, RenderSettings, Telemetry } from '../engine/types';
+import type { ActiveBackend, GridBuffer, PopEvent, RenderSettings, Telemetry } from '../engine/types';
 import { AudioToggle } from './AudioToggle';
 import { DebugPanel } from './DebugPanel';
 import { LoadingIndicator } from './LoadingIndicator';
@@ -41,6 +41,8 @@ function getResponsiveDefaults(): RenderSettings {
     backgroundStyle: 'atmosphere',
     backgroundOpacity: 0.65,
     wobbleIntensity: 1.0,
+    crtMode: 'off',
+    crtIntensity: 1.0,
   };
 }
 
@@ -79,6 +81,7 @@ export function AsciiBubbleLoader({
   const [muted, setMuted] = useState(initialMuted);
   const [debugOpen, setDebugOpen] = useState(false);
   const [cornerFps, setCornerFps] = useState(0);
+  const [activeBackend, setActiveBackend] = useState<ActiveBackend>('webgl2');
   const [settings, setSettings] = useState<RenderSettings>(() => {
     const defaults = getResponsiveDefaults();
     return {
@@ -160,6 +163,7 @@ export function AsciiBubbleLoader({
     let renderer: AsciiRenderer;
     try {
       renderer = createAsciiRenderer(canvas, settings.rendererMode);
+      setActiveBackend(renderer.backend);
     } catch {
       return;
     }
@@ -287,7 +291,11 @@ export function AsciiBubbleLoader({
         backgroundOpacity: curSettings.backgroundOpacity,
         wobbleIntensity: curSettings.wobbleIntensity,
       });
-      renderer.render(grid);
+      renderer.render(grid, {
+        mode: curSettings.crtMode,
+        intensity: curSettings.crtIntensity,
+        time: sim.time,
+      });
 
       const workMs = performance.now() - workStart;
       avgWorkMs = avgWorkMs * 0.9 + workMs * 0.1;
@@ -507,10 +515,18 @@ export function AsciiBubbleLoader({
     lastMoveTimeRef.current = 0;
   };
 
+  const useCssCrtFallback = activeBackend === 'canvas2d' && settings.crtMode !== 'off';
+  const crtCssClass = useCssCrtFallback ? `ascii-crt-fallback ascii-crt-${settings.crtMode}` : '';
+
   return (
     <div
       ref={containerRef}
-      className={`ascii-bubble-loader ${className}`.trim()}
+      className={`ascii-bubble-loader ${crtCssClass} ${className}`.trim()}
+      style={
+        useCssCrtFallback
+          ? ({ '--crt-intensity': settings.crtIntensity } as React.CSSProperties)
+          : undefined
+      }
       onContextMenu={(e) => e.preventDefault()}
       onPointerMove={handlePointerMove}
       onPointerDown={handlePointerDown}
@@ -527,6 +543,8 @@ export function AsciiBubbleLoader({
         className="ascii-bubble-canvas"
         aria-label="Pantalla interactiva de burbujas en caracteres ASCII"
       />
+
+      {useCssCrtFallback && <div className="ascii-crt-overlay" aria-hidden="true" />}
 
       {label !== '' && <LoadingIndicator label={label} progress={progress} />}
 

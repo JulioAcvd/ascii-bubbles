@@ -235,8 +235,16 @@ body,
   margin-top: 5px;
 }
 
+.ascii-debug-btn-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+  margin-top: 5px;
+}
+
 .ascii-debug-btn-row button,
-.ascii-debug-btn-grid button {
+.ascii-debug-btn-grid button,
+.ascii-debug-btn-grid-4 button {
   padding: 4px 5px;
   border: 1px solid rgba(154, 184, 232, 0.22);
   border-radius: 3px;
@@ -249,16 +257,57 @@ body,
 }
 
 .ascii-debug-btn-row button:hover,
-.ascii-debug-btn-grid button:hover {
+.ascii-debug-btn-grid button:hover,
+.ascii-debug-btn-grid-4 button:hover {
   border-color: rgba(143, 232, 255, 0.55);
   color: var(--fg-bright);
 }
 
 .ascii-debug-btn-row button.active,
-.ascii-debug-btn-grid button.active {
+.ascii-debug-btn-grid button.active,
+.ascii-debug-btn-grid-4 button.active {
   border-color: var(--accent);
   background: rgba(143, 232, 255, 0.16);
   color: var(--accent);
+}
+
+/* Lightweight Canvas 2D CSS CRT fallback (WebGL2 uses the native GPU CRT post-process shader) */
+.ascii-crt-fallback.ascii-crt-subtle .ascii-bubble-canvas {
+  filter: saturate(1.38) contrast(1.08) brightness(1.08);
+}
+
+.ascii-crt-fallback.ascii-crt-classic .ascii-bubble-canvas {
+  filter: saturate(1.55) contrast(1.14) brightness(1.12);
+}
+
+.ascii-crt-fallback.ascii-crt-arcade .ascii-bubble-canvas {
+  filter: saturate(1.78) contrast(1.2) brightness(1.16);
+}
+
+.ascii-crt-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  opacity: clamp(0.25, calc(var(--crt-intensity, 1) * 0.85), 1);
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.28) 3px
+    ),
+    repeating-linear-gradient(
+      to right,
+      rgba(255, 60, 60, 0.05) 0px,
+      rgba(60, 255, 110, 0.05) 1px,
+      rgba(70, 120, 255, 0.05) 2px
+    ),
+    radial-gradient(
+      ellipse at center,
+      rgba(255, 255, 255, 0) 58%,
+      rgba(0, 0, 0, 0.52) 100%
+    );
 }
 
 .ascii-debug-checkbox {

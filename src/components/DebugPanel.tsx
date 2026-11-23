@@ -1,4 +1,11 @@
-import type { BackgroundStyle, BubbleStyle, RendererMode, RenderSettings, Telemetry } from '../engine/types';
+import type {
+  BackgroundStyle,
+  BubbleStyle,
+  CrtMode,
+  RendererMode,
+  RenderSettings,
+  Telemetry,
+} from '../engine/types';
 
 export interface DebugPanelProps {
   settings: RenderSettings;
@@ -36,9 +43,18 @@ const RENDERER_MODES: { label: string; value: RendererMode }[] = [
   { label: 'Canvas 2D', value: 'canvas2d' },
 ];
 
+const CRT_MODES: { label: string; value: CrtMode; hint: string }[] = [
+  { label: 'Apagado', value: 'off', hint: 'Imagen digital limpia sin filtro CRT' },
+  { label: 'PVM Sutil', value: 'subtle', hint: 'Monitor de estudio: colores vivos, bloom suave y scanlines finas' },
+  { label: 'TV Retro', value: 'classic', hint: 'Tubo CRT clásico: curvatura, fósforo vibrante y aberración RGB' },
+  { label: 'Arcade', value: 'arcade', hint: 'Brillo fósforo intenso, alto contraste y color eléctrico' },
+];
+
 export function DebugPanel({ settings, telemetry, onChange, onClose }: DebugPanelProps) {
   const activeBubbleHint =
     BUBBLE_STYLES.find((s) => s.value === settings.bubbleStyle)?.hint ?? '';
+  const activeCrtHint =
+    CRT_MODES.find((c) => c.value === settings.crtMode)?.hint ?? '';
 
   return (
     <aside
@@ -87,6 +103,40 @@ export function DebugPanel({ settings, telemetry, onChange, onClose }: DebugPane
           </span>
         </div>
       </div>
+
+      <div className="ascii-debug-section">
+        <div className="ascii-debug-label">Efecto CRT Retro</div>
+        <div className="ascii-debug-btn-grid-4">
+          {CRT_MODES.map((crt) => (
+            <button
+              key={crt.value}
+              type="button"
+              className={settings.crtMode === crt.value ? 'active' : ''}
+              onClick={() => onChange({ crtMode: crt.value })}
+            >
+              {crt.label}
+            </button>
+          ))}
+        </div>
+        <div className="ascii-debug-hint">{activeCrtHint}</div>
+      </div>
+
+      {settings.crtMode !== 'off' && (
+        <div className="ascii-debug-section">
+          <label className="ascii-debug-label" htmlFor="ascii-crt-slider">
+            Intensidad CRT: <strong>{Math.round(settings.crtIntensity * 100)}%</strong>
+          </label>
+          <input
+            id="ascii-crt-slider"
+            type="range"
+            min={0.35}
+            max={1.5}
+            step={0.05}
+            value={settings.crtIntensity}
+            onChange={(e) => onChange({ crtIntensity: Number(e.target.value) })}
+          />
+        </div>
+      )}
 
       <div className="ascii-debug-section">
         <div className="ascii-debug-label">Estilo ASCII de burbujas</div>

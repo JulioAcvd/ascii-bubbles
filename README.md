@@ -12,6 +12,7 @@ Pantalla de carga interactiva hecha completamente con caracteres ASCII clásicos
   - Click izquierdo en espacio vacío → sopla una nueva burbuja rápida.
 - **Alto rendimiento (60Hz hasta 240Hz+)**: renderizador **WebGL2 instanciado** (1 *draw call* por frame sobre atlas de glifos *JetBrains Mono*) con **fallback automático a Canvas 2D** y escalado adaptativo opcional.
 - **Personalización en vivo (`[cfg]` o tecla `F`)**:
+  - **Efecto CRT Retro** (**Apagado**, **PVM Sutil**, **TV Retro**, **Arcade**) + slider de intensidad: shader GPU de curvatura de tubo, *phosphor bloom*, realce vibrante de colores, *scanlines*, *aperture grille* y aberración cromática RGB (con fallback CSS para Canvas 2D).
   - 5 estilos ASCII para las burbujas (**Realista**, **Original**, **Cristalino**, **Denso**, **Orgánico**) + slider de deformación.
   - 6 fondos ASCII de baja opacidad (**Atmósfera**, **Corrientes**, **Neblina**, **Rejilla**, **Bruma**, **Negro**) + slider de opacidad.
   - Selector de densidad de grilla (`9px`–`22px`), motor de renderizado (`Auto / WebGL2 / Canvas 2D`), cantidad de burbujas y telemetría de FPS/ms.
